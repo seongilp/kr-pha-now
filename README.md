@@ -1,36 +1,88 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# 약국 나우 (kr-pha-now)
 
-## Getting Started
+지금 문 연 약국을 내 주변에서 찾는다. https://kr-pha-now.vercel.app
 
-First, run the development server:
+## 왜 이게 필요한가
+
+포털에서 약국을 찾는 건 어렵지 않다. 어려운 건 **일요일 오후 세 시에, 추석 당일에**
+문 연 곳을 찾는 일이다. 전국 25,415곳 중 공휴일에 여는 곳은 6,240곳(24.6%),
+일요일은 5,314곳(20.9%)뿐이다.
+
+## 공휴일은 요일이 아니다
+
+2026년 추석은 목요일이다. 목요일 운영시간을 그대로 적용하면 닫힌 약국을 열었다고
+말하게 된다. 그래서 두 개의 API를 쓴다.
+
+| 데이터 | 출처 | 쓰는 곳 |
+|---|---|---|
+| 전국 약국 25,415곳 | 국립중앙의료원 (15000576) | 위치·요일별·공휴일 운영시간 |
+| 공휴일 46일 (2년치) | 한국천문연구원 특일정보 (15012690) | 오늘이 공휴일인지 판정 |
+
+특일정보를 쓰는 이유는 대체공휴일과 임시공휴일 때문이다. 하드코딩하면 정확히
+제일 필요한 날에 틀린다 — 2026년만 해도 대체공휴일 네 번에 지방선거일이 있다.
+
+## "모름"과 "닫힘"은 다르다
+
+운영시간을 한 칸도 신고하지 않은 약국이 있다. 거기에 "영업종료"라고 쓰면 그건
+확인한 게 아니라 거짓말이다. 그래서 상태는 셋이다.
+
+| 상태 | 색 | 뜻 |
+|---|---|---|
+| 영업중 | 초록 | 지금 이 시각이 운영시간 안에 있다 |
+| 영업종료 | 회색 | 운영시간을 신고했고, 지금은 그 밖이다 |
+| 시간 정보 없음 | 주황 | 신고된 운영시간이 없다. 가기 전에 전화할 것 |
+
+운영시간을 신고한 약국이 특정 요일만 비워 뒀다면 그날은 휴무로 읽는다. 아무 칸도
+없는 약국(전체의 0.3%)만 진짜 '모름'이다.
+
+## 데이터를 런타임에 치지 않는다
+
+약국 운영시간은 분 단위로 바뀌는 값이 아니다. 25,415건을 매 요청마다 25페이지씩
+끌어오면 느리고 포털에도 폐가 된다. 배포 전에 한 번 구워 `public/data/` 에 둔다.
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm run data      # data.go.kr → public/data/ (DATA_GO_KR_KEY 필요)
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+전국을 한 파일로 내리면 15MB라, **0.5° 격자 65개 타일**로 잘라 사용자가 선 자리
+주변 9칸만 받는다. 격자는 행정구역이 아니라 좌표로 나눈다 — 원본 주소의 시도
+표기가 `서울특별시`/`서울`/`전남광주통합` 처럼 흔들리는 반면, 좌표는 25,415곳
+전부 유효하기 때문이다.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## 지도가 없어도 쓸 수 있다
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+카카오 키가 없거나, 스크립트가 실패하거나, 배포 도메인이 카카오 콘솔에 등록되지
+않으면 지도 자리에 안내 문구만 뜬다. 목록은 그대로 동작한다.
 
-## Learn More
+## 개발
 
-To learn more about Next.js, take a look at the following resources:
+```bash
+npm install
+cp .env.example .env.local   # 키 채우기
+npm run data                 # 데이터 굽기 (최초 1회)
+npm run dev
+npm test                     # 판정 로직 33건
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## 사람이 해야 하는 것
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+- [ ] developers.kakao.com → 앱 → 플랫폼(Web) 에 `https://kr-pha-now.vercel.app` 등록
+      (로컬에서 지도를 보려면 `http://localhost:3000` 도 함께)
+- [ ] Vercel 환경변수 `NEXT_PUBLIC_KAKAO_MAP_KEY`
 
-## Deploy on Vercel
+## 파일
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+| | |
+|---|---|
+| `lib/hours.ts` | 지금 문을 열었는가 — 이 앱의 전부 |
+| `lib/geo.ts` | 거리와 0.5° 격자 |
+| `lib/nearby.ts` | 반경·필터·정렬 |
+| `lib/load-tiles.ts` | 주변 타일만 받아오기 |
+| `scripts/build-data.ts` | data.go.kr → `public/data/` |
+| `components/pharmacy-map.tsx` | 카카오지도 (실패해도 조용히 물러난다) |
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## 한계
+
+운영시간은 약국이 신고한 값이라 실제와 다를 수 있다. 임시휴업·명절 단축영업은
+어느 API에도 안 들어온다. 그래서 화면 아래에 "가기 전에 전화로 확인하세요"를
+둔다 — 앱이 대신 확인해 줄 수 없는 것을 확인해 준 척하지 않는다.
