@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Crosshair, LoaderCircle, LocateFixed } from 'lucide-react';
 
 import { dayIndex, isHoliday } from '@/lib/hours';
@@ -79,6 +79,16 @@ export function PharmacyBrowser() {
     () => rank(pharmacies, center, now, holidays, { openOnly, radiusMeters: radius }),
     [pharmacies, center, now, holidays, openOnly, radius],
   );
+
+  /* 지도는 데이터보다 먼저 준비된다. 타일이 처음 도착한 시점에 한 번 맞춰 주지
+     않으면 초기 화면이 결과와 무관한 배율로 남는다. 사용자가 이미 지도를 옮겼다면
+     건드리지 않는다 — 옮긴 화면을 되돌리는 쪽이 더 나쁘다. */
+  const fittedOnce = useRef(false);
+  useEffect(() => {
+    if (fittedOnce.current || pharmacies.length === 0 || movedByUser) return;
+    fittedOnce.current = true;
+    setFitNonce((n) => n + 1);
+  }, [pharmacies, movedByUser]);
 
   const onMapMove = useCallback((next: { lat: number; lon: number }) => {
     setCenter(next);

@@ -224,6 +224,11 @@ export function PharmacyMap({
     const map = mapRef.current;
     if (sdk !== 'ready' || !maps || !map) return;
 
+    /* 결과가 없으면 맞추지 않는다. 중심점 하나만 넣고 setBounds 를 부르면 지도가
+       그 점에 최대로 확대되고, 나중에 도착한 핀은 화면 밖이라 카카오가 DOM 자체를
+       만들지 않는다 — 핀이 하나도 없는 지도가 된다. */
+    if (rows.length === 0) return;
+
     const bounds = new maps.LatLngBounds();
     bounds.extend(new maps.LatLng(center.lat, center.lon));
     for (const row of rows) bounds.extend(new maps.LatLng(row.pharmacy.y, row.pharmacy.x));
