@@ -25,6 +25,7 @@ interface KakaoLatLngBounds {
   isEmpty(): boolean;
 }
 interface KakaoMap {
+  getCenter(): KakaoLatLng;
   setCenter(latlng: KakaoLatLng): void;
   setLevel(level: number): void;
   /** 컨테이너 크기가 바뀐 뒤 다시 그린다. 이걸 안 부르면 타일이 옛 크기로 남는다. */
@@ -42,6 +43,10 @@ interface KakaoOverlay {
 }
 interface KakaoMaps {
   load(cb: () => void): void;
+  event: {
+    addListener(target: KakaoMap, type: string, handler: () => void): void;
+    removeListener(target: KakaoMap, type: string, handler: () => void): void;
+  };
   LatLng: new (lat: number, lng: number) => KakaoLatLng;
   LatLngBounds: new () => KakaoLatLngBounds;
   Map: new (el: HTMLElement, opts: { center: KakaoLatLng; level: number }) => KakaoMap;
@@ -115,22 +120,43 @@ function meHtml(): string {
 
 interface Props {
   rows: readonly Ranked[];
-  origin: { lat: number; lon: number };
+  /** 내 위치. 파란 점으로 따로 찍는다 — 검색 중심과 다를 수 있다. */
+  me: { lat: number; lon: number };
+  /** 검색 중심. 지도를 옮기면 여기가 바뀐다. */
+  center: { lat: number; lon: number };
+  /** 값이 바뀌면 지도를 결과에 맞춰 다시 맞춘다. 사용자가 옮긴 뒤에는 건드리지 않는다. */
+  fitNonce: number;
   selectedId: string | null;
   onSelect: (id: string) => void;
+  /** 사용자가 지도를 옮겼다. 그 자리를 새 검색 중심으로 쓴다. */
+  onMove: (center: { lat: number; lon: number }) => void;
 }
 
-export function PharmacyMap({ rows, origin, selectedId, onSelect }: Props) {
+export function PharmacyMap({
+  rows,
+  me,
+  center,
+  fitNonce,
+  selectedId,
+  onSelect,
+  onMove,
+}: Props) {
   const [sdk, setSdk] = useState<SdkState>(KEY ? 'loading' : 'nokey');
   const boxRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<KakaoMap | null>(null);
   const overlaysRef = useRef<KakaoOverlay[]>([]);
-  // 최신 onSelect 를 클릭 위임이 읽을 수 있게 들고만 있는다. 렌더 도중 ref 를
+  /* 우리가 지도를 움직인 것인지, 사용자가 움직인 것인지 구분한다. setBounds 도
+     idle 을 발생시키므로, 이 표시가 없으면 "결과에 맞춰 이동 → 사용자가 옮긴 줄
+     알고 재검색 → 다시 이동"으로 끝없이 돈다. */
+  const programmaticRef = useRef(false);
+  // 최신 콜백을 리스너가 읽을 수 있게 들고만 있는다. 렌더 도중 ref 를
   // 건드리면 안 되므로 효과에서 갱신한다.
   const selectRef = useRef(onSelect);
+  const moveRef = useRef(onMove);
   useEffect(() => {
     selectRef.current = onSelect;
-  }, [onSelect]);
+    moveRef.current = onMove;
+  }, [onSelect, onMove]);
 
   useEffect(() => {
     if (!KEY) return;
@@ -140,10 +166,21 @@ export function PharmacyMap({ rows, origin, selectedId, onSelect }: Props) {
         setSdk('failed');
         return;
       }
-      mapRef.current = new maps.Map(boxRef.current, {
-        center: new maps.LatLng(origin.lat, origin.lon),
+      const map = new maps.Map(boxRef.current, {
+        center: new maps.LatLng(center.lat, center.lon),
         level: 5,
       });
+      mapRef.current = map;
+
+      maps.event.addListener(map, 'idle', () => {
+        if (programmaticRef.current) {
+          programmaticRef.current = false;
+          return;
+        }
+        const next = map.getCenter();
+        moveRef.current({ lat: next.getLat(), lon: next.getLng() });
+      });
+
       setSdk('ready');
     });
     // 지도는 한 번만 만든다. 이후 이동은 rows 효과가 맡는다.
@@ -159,16 +196,13 @@ export function PharmacyMap({ rows, origin, selectedId, onSelect }: Props) {
     for (const overlay of overlaysRef.current) overlay.setMap(null);
     overlaysRef.current = [];
 
-    const bounds = new maps.LatLngBounds();
-
-    const me = new maps.CustomOverlay({
-      position: new maps.LatLng(origin.lat, origin.lon),
+    const marker = new maps.CustomOverlay({
+      position: new maps.LatLng(me.lat, me.lon),
       content: meHtml(),
       zIndex: 1,
     });
-    me.setMap(map);
-    overlaysRef.current.push(me);
-    bounds.extend(new maps.LatLng(origin.lat, origin.lon));
+    marker.setMap(map);
+    overlaysRef.current.push(marker);
 
     for (const row of rows) {
       const position = new maps.LatLng(row.pharmacy.y, row.pharmacy.x);
@@ -180,13 +214,26 @@ export function PharmacyMap({ rows, origin, selectedId, onSelect }: Props) {
       });
       overlay.setMap(map);
       overlaysRef.current.push(overlay);
-      bounds.extend(position);
     }
+  }, [rows, me, selectedId, sdk]);
 
-    if (!bounds.isEmpty()) {
-      map.setBounds(bounds, FIT_PADDING, FIT_PADDING, FIT_PADDING, FIT_PADDING);
-    }
-  }, [rows, origin, selectedId, sdk]);
+  /* 결과에 맞춰 지도를 움직이는 것은 요청이 있을 때(fitNonce)뿐이다. 핀이 바뀔
+     때마다 맞추면, 사용자가 옮긴 화면을 매번 되돌려 놓게 된다. */
+  useEffect(() => {
+    const maps = window.kakao?.maps;
+    const map = mapRef.current;
+    if (sdk !== 'ready' || !maps || !map) return;
+
+    const bounds = new maps.LatLngBounds();
+    bounds.extend(new maps.LatLng(center.lat, center.lon));
+    for (const row of rows) bounds.extend(new maps.LatLng(row.pharmacy.y, row.pharmacy.x));
+    if (bounds.isEmpty()) return;
+
+    programmaticRef.current = true;
+    map.setBounds(bounds, FIT_PADDING, FIT_PADDING, FIT_PADDING, FIT_PADDING);
+    // rows 는 의도적으로 뺀다 — 맞춤은 fitNonce 가 바뀔 때만 일어나야 한다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fitNonce, sdk]);
 
   /* 컨테이너 크기가 바뀌면 다시 그린다. 지도를 만드는 시점과 최종 레이아웃이
      잡히는 시점이 다르고(sticky 열, 반응형 전환, 창 크기 변경), 그대로 두면

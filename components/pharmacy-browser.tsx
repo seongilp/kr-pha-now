@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
-import { Crosshair, LoaderCircle } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Crosshair, LoaderCircle, LocateFixed } from 'lucide-react';
 
 import { dayIndex, isHoliday } from '@/lib/hours';
 import { loadIndex, loadNear, type DataIndex } from '@/lib/load-tiles';
@@ -22,7 +22,13 @@ type Located = 'asking' | 'gps' | 'fallback';
 export function PharmacyBrowser() {
   const [index, setIndex] = useState<DataIndex | null>(null);
   const [pharmacies, setPharmacies] = useState<Pharmacy[]>([]);
-  const [origin, setOrigin] = useState(FALLBACK);
+  /** 내 위치. 지도의 파란 점. */
+  const [me, setMe] = useState(FALLBACK);
+  /** 검색 중심. 지도를 옮기면 여기가 바뀐다 — 옮긴 자리의 약국을 보여주기 위해서. */
+  const [center, setCenter] = useState(FALLBACK);
+  /** 값이 바뀔 때만 지도를 결과에 맞춘다. */
+  const [fitNonce, setFitNonce] = useState(0);
+  const [movedByUser, setMovedByUser] = useState(false);
   const [located, setLocated] = useState<Located>('asking');
   const [openOnly, setOpenOnly] = useState(true);
   const [radius, setRadius] = useState<number>(3000);
@@ -49,7 +55,10 @@ export function PharmacyBrowser() {
     }
     navigator.geolocation.getCurrentPosition(
       (position) => {
-        setOrigin({ lat: position.coords.latitude, lon: position.coords.longitude });
+        const here = { lat: position.coords.latitude, lon: position.coords.longitude };
+        setMe(here);
+        setCenter(here);
+        setFitNonce((n) => n + 1);
         setLocated('gps');
       },
       // 거부·실패는 오류가 아니다. 서울시청 기준으로 보여주고 그렇다고 말한다.
@@ -60,16 +69,27 @@ export function PharmacyBrowser() {
 
   useEffect(() => {
     if (!index) return;
-    loadNear(origin.lat, origin.lon, index)
+    loadNear(center.lat, center.lon, index)
       .then(setPharmacies)
       .catch((e: Error) => setError(e.message));
-  }, [index, origin]);
+  }, [index, center]);
 
   const holidays = useMemo(() => new Set(index?.holidays ?? []), [index]);
   const rows = useMemo(
-    () => rank(pharmacies, origin, now, holidays, { openOnly, radiusMeters: radius }),
-    [pharmacies, origin, now, holidays, openOnly, radius],
+    () => rank(pharmacies, center, now, holidays, { openOnly, radiusMeters: radius }),
+    [pharmacies, center, now, holidays, openOnly, radius],
   );
+
+  const onMapMove = useCallback((next: { lat: number; lon: number }) => {
+    setCenter(next);
+    setMovedByUser(true);
+  }, []);
+
+  const backToMe = useCallback(() => {
+    setCenter(me);
+    setMovedByUser(false);
+    setFitNonce((n) => n + 1);
+  }, [me]);
 
   const today = dayIndex(now, holidays);
   const holidayToday = isHoliday(now, holidays);
@@ -116,7 +136,10 @@ export function PharmacyBrowser() {
             <button
               key={meters}
               type="button"
-              onClick={() => setRadius(meters)}
+              onClick={() => {
+                setRadius(meters);
+                setFitNonce((n) => n + 1);
+              }}
               aria-pressed={radius === meters}
               className={cn(
                 'rounded-full px-2.5 py-1 text-xs transition',
@@ -140,8 +163,23 @@ export function PharmacyBrowser() {
         ) : (
           <>
             <Crosshair className="size-3.5" aria-hidden />
-            {located === 'gps' ? '현재 위치 기준' : '서울시청 기준 (위치 권한 없음)'} · 영업중{' '}
-            <strong className="text-emerald-400">{openCount}</strong>곳 / 표시 {rows.length}곳
+            {movedByUser
+              ? '지도에서 찾은 위치 기준'
+              : located === 'gps'
+                ? '현재 위치 기준'
+                : '서울시청 기준 (위치 권한 없음)'}{' '}
+            · 영업중 <strong className="text-emerald-400">{openCount}</strong>곳 / 표시{' '}
+            {rows.length}곳
+            {movedByUser ? (
+              <button
+                type="button"
+                onClick={backToMe}
+                className="ml-1 inline-flex items-center gap-1 rounded-full bg-neutral-800 px-2 py-0.5 text-xs text-sky-300 transition hover:bg-neutral-700"
+              >
+                <LocateFixed className="size-3.5" aria-hidden />
+                내 위치로
+              </button>
+            ) : null}
           </>
         )}
       </p>
@@ -152,9 +190,12 @@ export function PharmacyBrowser() {
         <div className="flex flex-col gap-3 lg:sticky lg:top-6">
           <PharmacyMap
             rows={rows}
-            origin={origin}
+            me={me}
+            center={center}
+            fitNonce={fitNonce}
             selectedId={selectedId}
             onSelect={setSelectedId}
+            onMove={onMapMove}
           />
 
           <div className="flex flex-wrap gap-3 text-xs text-neutral-500">
