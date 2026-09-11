@@ -42,8 +42,10 @@ export function PharmacyBrowser() {
 
   useEffect(() => {
     if (!navigator.geolocation) {
-      setLocated('fallback');
-      return;
+      // 결과를 콜백과 같은 비동기 경로로 흘려보낸다. 효과 본문에서 바로 상태를
+      // 바꾸면 렌더가 연쇄로 한 번 더 돈다.
+      const timer = setTimeout(() => setLocated('fallback'), 0);
+      return () => clearTimeout(timer);
     }
     navigator.geolocation.getCurrentPosition(
       (position) => {
@@ -144,29 +146,40 @@ export function PharmacyBrowser() {
         )}
       </p>
 
-      <div className="h-[45vh] min-h-72">
-        <PharmacyMap rows={rows} origin={origin} selectedId={selectedId} onSelect={setSelectedId} />
-      </div>
+      {/* 데스크탑에서는 지도를 왼쪽에 고정하고 목록을 오른쪽에서 스크롤한다.
+          좁은 화면에서는 지도 → 목록으로 그냥 쌓인다. */}
+      <div className="lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(360px,420px)] lg:items-start lg:gap-5">
+        <div className="flex flex-col gap-3 lg:sticky lg:top-6">
+          <PharmacyMap
+            rows={rows}
+            origin={origin}
+            selectedId={selectedId}
+            onSelect={setSelectedId}
+          />
 
-      <div className="flex flex-wrap gap-3 text-xs text-neutral-500">
-        {(['open', 'closed', 'unknown'] as const).map((status) => (
-          <span key={status} className="inline-flex items-center gap-1.5">
-            <span
-              className="inline-block size-2.5 rounded-full"
-              style={{ background: STATUS_STYLE[status].pin }}
-              aria-hidden
-            />
-            {STATUS_STYLE[status].label}
-          </span>
-        ))}
-      </div>
+          <div className="flex flex-wrap gap-3 text-xs text-neutral-500">
+            {(['open', 'closed', 'unknown'] as const).map((status) => (
+              <span key={status} className="inline-flex items-center gap-1.5">
+                <span
+                  className="inline-block size-2.5 rounded-full"
+                  style={{ background: STATUS_STYLE[status].pin }}
+                  aria-hidden
+                />
+                {STATUS_STYLE[status].label}
+              </span>
+            ))}
+          </div>
+        </div>
 
-      <PharmacyList
-        rows={rows}
-        dayIndex={today}
-        selectedId={selectedId}
-        onSelect={setSelectedId}
-      />
+        <div className="mt-4 lg:mt-0">
+          <PharmacyList
+            rows={rows}
+            dayIndex={today}
+            selectedId={selectedId}
+            onSelect={setSelectedId}
+          />
+        </div>
+      </div>
     </div>
   );
 }

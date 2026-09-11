@@ -2,7 +2,7 @@ import { PharmacyBrowser } from '@/components/pharmacy-browser';
 
 export default function Home() {
   return (
-    <main className="mx-auto w-full max-w-2xl px-4 py-6">
+    <main className="mx-auto w-full max-w-2xl px-4 py-6 lg:max-w-6xl lg:px-6">
       <header className="mb-5">
         <h1 className="text-xl font-semibold tracking-tight">약국 나우</h1>
         <p className="mt-1 text-sm text-neutral-400">지금 문 연 약국을 내 주변에서 찾습니다.</p>

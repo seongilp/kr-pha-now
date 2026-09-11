@@ -27,6 +27,8 @@ interface KakaoLatLngBounds {
 interface KakaoMap {
   setCenter(latlng: KakaoLatLng): void;
   setLevel(level: number): void;
+  /** 컨테이너 크기가 바뀐 뒤 다시 그린다. 이걸 안 부르면 타일이 옛 크기로 남는다. */
+  relayout(): void;
   setBounds(
     bounds: KakaoLatLngBounds,
     paddingTop?: number,
@@ -61,8 +63,6 @@ type SdkState = 'nokey' | 'loading' | 'ready' | 'failed';
 const KEY = process.env.NEXT_PUBLIC_KAKAO_MAP_KEY;
 const SDK_TIMEOUT_MS = 10_000;
 const FIT_PADDING = 56;
-/** 주변 몇 곳만 잡힐 때 지도가 과하게 확대되지 않도록 하는 하한. */
-const MIN_LEVEL = 4;
 
 function loadSdk(onDone: (ok: boolean) => void): () => void {
   if (window.kakao?.maps) {
@@ -125,8 +125,12 @@ export function PharmacyMap({ rows, origin, selectedId, onSelect }: Props) {
   const boxRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<KakaoMap | null>(null);
   const overlaysRef = useRef<KakaoOverlay[]>([]);
+  // 최신 onSelect 를 클릭 위임이 읽을 수 있게 들고만 있는다. 렌더 도중 ref 를
+  // 건드리면 안 되므로 효과에서 갱신한다.
   const selectRef = useRef(onSelect);
-  selectRef.current = onSelect;
+  useEffect(() => {
+    selectRef.current = onSelect;
+  }, [onSelect]);
 
   useEffect(() => {
     if (!KEY) return;
@@ -184,6 +188,18 @@ export function PharmacyMap({ rows, origin, selectedId, onSelect }: Props) {
     }
   }, [rows, origin, selectedId, sdk]);
 
+  /* 컨테이너 크기가 바뀌면 다시 그린다. 지도를 만드는 시점과 최종 레이아웃이
+     잡히는 시점이 다르고(sticky 열, 반응형 전환, 창 크기 변경), 그대로 두면
+     타일이 옛 크기로 남아 오른쪽에 이음새가 생긴다. */
+  useEffect(() => {
+    const box = boxRef.current;
+    if (sdk !== 'ready' || !box) return;
+
+    const observer = new ResizeObserver(() => mapRef.current?.relayout());
+    observer.observe(box);
+    return () => observer.disconnect();
+  }, [sdk]);
+
   // 핀 클릭은 컨테이너에 위임한다. CustomOverlay 의 content 는 평범한 DOM 이다.
   useEffect(() => {
     const box = boxRef.current;
@@ -199,8 +215,10 @@ export function PharmacyMap({ rows, origin, selectedId, onSelect }: Props) {
   }, [sdk]);
 
   if (sdk === 'nokey' || sdk === 'failed') {
+    // 지도가 없을 때 큰 빈 상자를 남기면 화면 대부분이 아무 정보도 주지 않는다.
+    // 낮게 접고 목록에 자리를 넘긴다.
     return (
-      <div className="flex h-full min-h-64 flex-col items-center justify-center gap-2 rounded-xl border border-neutral-800 bg-neutral-900/50 p-6 text-center">
+      <div className="flex flex-col items-center justify-center gap-1.5 rounded-xl border border-neutral-800 bg-neutral-900/50 px-6 py-8 text-center">
         <MapPinOff className="size-5 text-neutral-500" aria-hidden />
         <p className="text-sm text-neutral-400">
           {sdk === 'nokey'
@@ -215,7 +233,7 @@ export function PharmacyMap({ rows, origin, selectedId, onSelect }: Props) {
   return (
     <div
       ref={boxRef}
-      className="h-full min-h-64 w-full overflow-hidden rounded-xl border border-neutral-800 bg-neutral-900"
+      className="h-[45vh] min-h-72 w-full overflow-hidden rounded-xl border border-neutral-800 bg-neutral-900 lg:h-[calc(100dvh-12rem)]"
       aria-label="주변 약국 지도"
     />
   );
